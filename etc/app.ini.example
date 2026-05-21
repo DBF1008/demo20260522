@@ -1,0 +1,41 @@
+[web-server]
+Environment = "dev"
+EndPort = 52001
+ReadTimeout = 10
+WriteTimeout = 10
+IdleTimeout = 10
+PIDFile = "./micro-mall-api.pid"
+SupportH2 = true
+
+[web-logger]
+RootPath = "./logs"
+Level = "info"
+
+[web-rate-limit]
+MaxConcurrent = 0
+
+[web-jwt]
+Secret = "&WJof0jaY4ByTHR2"
+TokenExpireSecond = 2592000
+
+[micro-mall-g2cache]
+CacheDebug = false
+CacheMonitor = false
+OutCachePubSub = false
+FreeCacheSize = 52428800
+PubSubRedisChannel = "micro-mall-api-pubsub-channel"
+RedisConfDSN = "127.0.0.1:6379"
+RedisConfDB = 1
+RedisConfPwd = "oyuioyiuoyui"
+RedisConfMaxConn = 30
+PubSubRedisConfDSN = "127.0.0.1:6379"
+PubSubRedisConfDB = 9
+PubSubRedisConfPwd = "oyuioyiuoyui"
+PubSubRedisConfMaxConn = 3
+
+[email-config]
+Enable = false
+User = "xxxx@qq.com"
+Password = "xxxx"
+Host = "smtp.qq.com"
+Port = "465"

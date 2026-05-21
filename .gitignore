@@ -1,0 +1,25 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+.idea/
+logs/
+vendor
+static/*-report-*
+micro-mall-api
+etc/app.ini
+micro-mall-api.pid
+project.tree
+micro-mall-api-darwin-amd64
+micro-mall-api-linux-amd64
+micro-mall-api-windows-amd64
+micro-mall-api-windows-amd64.exe
+nohup.out
