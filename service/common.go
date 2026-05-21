@@ -9,7 +9,11 @@ import (
 )
 
 func genUUID() string {
-	return uuid.NewV4().String()
+	id, err := uuid.NewV4()
+	if err != nil {
+		return ""
+	}
+	return id.String()
 }
 
 func GenInviterCode() string {

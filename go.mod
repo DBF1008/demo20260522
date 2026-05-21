@@ -26,14 +26,11 @@ require (
 	github.com/sony/sonyflake v1.0.0
 	github.com/tealeg/xlsx v1.0.5
 	golang.org/x/net v0.5.0
-	golang.org/x/sync v0.0.0-20220722155255-886fb9371eb4
-	google.golang.org/grpc v1.49.0
+	golang.org/x/sync v0.1.0
+	google.golang.org/grpc v1.53.0
 	google.golang.org/protobuf v1.28.1
 	gopkg.in/ini.v1 v1.60.2 // indirect
 	xorm.io/xorm v1.0.4
 )
 
-replace (
-	github.com/etcd-io/etcd => github.com/etcd-io/etcd v3.3.27+incompatible
-	google.golang.org/grpc => google.golang.org/grpc v1.26.0
-)
+replace github.com/etcd-io/etcd => github.com/etcd-io/etcd v3.3.27+incompatible
