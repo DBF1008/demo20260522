@@ -22,57 +22,71 @@ var (
 	flagEnv         = flag.String("env", "", "set exec environment eg: dev,test,prod")
 )
 
-// 初始化application--日志部分
 func initApplication(application *vars.Application) error {
 	flag.Parse()
-	rootPath := config.DefaultLoggerRootPath
-	if application.LoggerPath != "" {
-		rootPath = application.LoggerPath
-	}
-	if vars.LoggerSetting != nil && vars.LoggerSetting.RootPath != "" {
-		rootPath = vars.LoggerSetting.RootPath
-	}
-	if *flagLoggerPath != "" {
-		rootPath = *flagLoggerPath
-	}
-	application.LoggerPath = rootPath
 
-	loggerLevel := config.DefaultLoggerLevel
-	if application.LoggerLevel != "" {
-		loggerLevel = application.LoggerLevel
-	}
-	if vars.LoggerSetting != nil && vars.LoggerSetting.Level != "" {
-		loggerLevel = vars.LoggerSetting.Level
-	}
-	if *flagLoggerLevel != "" {
-		loggerLevel = *flagLoggerLevel
-	}
-	application.LoggerLevel = loggerLevel
-	vars.LoggerLevel = loggerLevel
+	application.LoggerPath = resolveStringSetting(
+		config.DefaultLoggerRootPath,
+		application.LoggerPath,
+		loggerRootPath(),
+		*flagLoggerPath,
+	)
+	application.LoggerLevel = resolveStringSetting(
+		config.DefaultLoggerLevel,
+		application.LoggerLevel,
+		loggerLevel(),
+		*flagLoggerLevel,
+	)
+	application.Environment = resolveStringSetting(
+		config.DefaultEnvironmentRelease,
+		application.Environment,
+		serverEnvironment(),
+		*flagEnv,
+	)
 
-	environment := config.DefaultEnvironmentRelease
-	if application.Environment != "" {
-		environment = application.Environment
-	}
-	if vars.ServerSetting != nil && vars.ServerSetting.Environment != "" {
-		environment = vars.ServerSetting.Environment
-	}
-	if *flagEnv != "" {
-		environment = *flagEnv
-	}
-	application.Environment = environment
-	vars.Environment = environment
+	vars.LoggerLevel = application.LoggerLevel
+	vars.Environment = application.Environment
 
 	if vars.ServerSetting == nil {
 		vars.ServerSetting = new(setting.ServerSettingS)
 	}
 
-	err := log.InitGlobalConfig(rootPath, loggerLevel, application.Name)
-	if err != nil {
+	if err := log.InitGlobalConfig(application.LoggerPath, application.LoggerLevel, application.Name); err != nil {
 		return fmt.Errorf("log.InitGlobalConfig: %v", err)
 	}
 
 	return nil
+}
+
+func resolveStringSetting(defaultValue string, values ...string) string {
+	result := defaultValue
+	for _, value := range values {
+		if value != "" {
+			result = value
+		}
+	}
+	return result
+}
+
+func loggerRootPath() string {
+	if vars.LoggerSetting == nil {
+		return ""
+	}
+	return vars.LoggerSetting.RootPath
+}
+
+func loggerLevel() string {
+	if vars.LoggerSetting == nil {
+		return ""
+	}
+	return vars.LoggerSetting.Level
+}
+
+func serverEnvironment() string {
+	if vars.ServerSetting == nil {
+		return ""
+	}
+	return vars.ServerSetting.Environment
 }
 
 var appCloseChOnce sync.Once
@@ -99,7 +113,6 @@ func appPrepareForceExit() {
 	})
 }
 
-// 初始化全局配置
 func setupCommonVars(application *vars.WEBApplication) error {
 	var err error
 	vars.ErrorLogger, err = log.GetErrLogger("err")

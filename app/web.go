@@ -3,7 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
-	"github.com/seata/seata-go/pkg/client"
+	"net"
 	"net/http"
 	"strconv"
 	"time"
@@ -13,6 +13,7 @@ import (
 	"gitee.com/cristiane/micro-mall-api/pkg/util/kprocess"
 	"gitee.com/cristiane/micro-mall-api/vars"
 	"github.com/robfig/cron/v3"
+	"github.com/seata/seata-go/pkg/client"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
 )
@@ -29,45 +30,20 @@ func RunApplication(application *vars.WEBApplication) {
 
 	application.Type = vars.AppTypeWeb
 	vars.App = application
-	err := runApp(application)
-	if err != nil {
+	if err := runApp(application); err != nil {
 		logging.Infof("App exit over: %v\n", err)
 	}
 	logging.Info("App exit over")
 }
 
 func runApp(webApp *vars.WEBApplication) error {
-	// 1. load config
-	err := config.LoadDefaultConfig(webApp.Application)
-	if err != nil {
+	if err := loadWebConfig(webApp); err != nil {
 		return err
 	}
-	if webApp.LoadConfig != nil {
-		err = webApp.LoadConfig()
-		if err != nil {
-			return err
-		}
-	}
-
-	// 2. init application
-	err = initApplication(webApp.Application)
-	if err != nil {
+	if err := setupWebApp(webApp); err != nil {
 		return err
 	}
 
-	// 3. setup vars
-	err = setupWEBVars(webApp)
-	if err != nil {
-		return err
-	}
-	if webApp.SetupVars != nil {
-		err = webApp.SetupVars()
-		if err != nil {
-			return fmt.Errorf("App.SetupVars err: %v", err)
-		}
-	}
-
-	// startup control
 	next, err := startUpControl(vars.ServerSetting.PIDFile)
 	if err != nil {
 		return err
@@ -76,102 +52,143 @@ func runApp(webApp *vars.WEBApplication) error {
 		return nil
 	}
 
-	// 5 run task
-	if webApp.RegisterTasks != nil {
-		cronTasks := webApp.RegisterTasks()
-		if len(cronTasks) != 0 {
-			cn := cron.New(cron.WithSeconds())
-			for i := 0; i < len(cronTasks); i++ {
-				if cronTasks[i].TaskFunc != nil {
-					_, err = cn.AddFunc(cronTasks[i].Cron, cronTasks[i].TaskFunc)
-					if err != nil {
-						logging.Fatalf("App run cron task err: %v", err)
-					}
-				}
-			}
-			cn.Start()
-			logging.Info("App run cron task")
+	startCronTasks(webApp.RegisterTasks)
+
+	return serveHTTP(webApp)
+}
+
+func loadWebConfig(webApp *vars.WEBApplication) error {
+	if err := config.LoadDefaultConfig(webApp.Application); err != nil {
+		return err
+	}
+	if webApp.LoadConfig != nil {
+		if err := webApp.LoadConfig(); err != nil {
+			return err
 		}
 	}
+	return nil
+}
 
-	// 6. set init service port
-	var addr string
-	if webApp.EndPort != 0 {
-		addr = localAddr + strconv.Itoa(webApp.EndPort)
-	} else if vars.ServerSetting.EndPort != 0 {
-		addr = localAddr + strconv.Itoa(vars.ServerSetting.EndPort)
+func setupWebApp(webApp *vars.WEBApplication) error {
+	if err := initApplication(webApp.Application); err != nil {
+		return err
+	}
+	if err := setupWEBVars(webApp); err != nil {
+		return err
+	}
+	if webApp.SetupVars != nil {
+		if err := webApp.SetupVars(); err != nil {
+			return fmt.Errorf("App.SetupVars err: %v", err)
+		}
+	}
+	return nil
+}
+
+func startCronTasks(register func() []vars.CronTask) {
+	if register == nil {
+		return
 	}
 
-	// 7. run http server
+	cronTasks := register()
+	if len(cronTasks) == 0 {
+		return
+	}
+
+	cn := cron.New(cron.WithSeconds())
+	for _, task := range cronTasks {
+		if task.TaskFunc == nil {
+			continue
+		}
+		if _, err := cn.AddFunc(task.Cron, task.TaskFunc); err != nil {
+			logging.Fatalf("App run cron task err: %v", err)
+		}
+	}
+	cn.Start()
+	logging.Info("App run cron task")
+}
+
+func serveHTTP(webApp *vars.WEBApplication) error {
 	if webApp.RegisterHttpRoute == nil {
 		logging.Fatalf("App RegisterHttpRoute nil ??")
 	}
 
 	kp := new(kprocess.KProcess)
-	network := "tcp"
-	if vars.ServerSetting != nil && vars.ServerSetting.Network != "" {
-		network = vars.ServerSetting.Network
-	}
+	addr := resolveListenAddr(webApp)
+	network := resolveNetwork()
 	ln, err := kp.Listen(network, addr, vars.ServerSetting.PIDFile)
 	if err != nil {
 		logging.Fatalf("App kprocess listen err: %v", err)
 	}
 	logging.Infof("server process listen network: %v, addr: %v\n", network, addr)
-	ginEngine := webApp.RegisterHttpRoute()
-	var handler http.Handler
-	if vars.ServerSetting != nil && vars.ServerSetting.SupportH2 {
-		logging.Info("server http handler support h2")
-		handler = h2c.NewHandler(ginEngine, &http2.Server{IdleTimeout: time.Duration(vars.ServerSetting.IdleTimeout) * time.Second})
-	} else {
-		handler = ginEngine
-	}
-	serve := http.Server{
-		Handler:      handler,
+
+	server := http.Server{
+		Handler:      buildHTTPHandler(webApp),
 		ReadTimeout:  time.Duration(vars.ServerSetting.ReadTimeout) * time.Second,
 		WriteTimeout: time.Duration(vars.ServerSetting.WriteTimeout) * time.Second,
 		IdleTimeout:  time.Duration(vars.ServerSetting.IdleTimeout) * time.Second,
 	}
-	serverCloe := make(chan struct{})
+
+	return serveWithProcessControl(kp, &server, ln, webApp.Application)
+}
+
+func resolveListenAddr(webApp *vars.WEBApplication) string {
+	if webApp.EndPort != 0 {
+		return localAddr + strconv.Itoa(webApp.EndPort)
+	}
+	if vars.ServerSetting != nil && vars.ServerSetting.EndPort != 0 {
+		return localAddr + strconv.Itoa(vars.ServerSetting.EndPort)
+	}
+	return ""
+}
+
+func resolveNetwork() string {
+	if vars.ServerSetting != nil && vars.ServerSetting.Network != "" {
+		return vars.ServerSetting.Network
+	}
+	return "tcp"
+}
+
+func buildHTTPHandler(webApp *vars.WEBApplication) http.Handler {
+	ginEngine := webApp.RegisterHttpRoute()
+	if vars.ServerSetting != nil && vars.ServerSetting.SupportH2 {
+		logging.Info("server http handler support h2")
+		return h2c.NewHandler(ginEngine, &http2.Server{IdleTimeout: time.Duration(vars.ServerSetting.IdleTimeout) * time.Second})
+	}
+	return ginEngine
+}
+
+func serveWithProcessControl(kp *kprocess.KProcess, server *http.Server, ln net.Listener, application *vars.Application) error {
+	serverCloseCh := make(chan struct{})
 	go func() {
-		defer func() {
-			close(serverCloe)
-		}()
-		err = serve.Serve(ln)
-		if err != nil {
+		defer close(serverCloseCh)
+		if err := server.Serve(ln); err != nil {
 			logging.Infof("App run Serve: %v\n", err)
 		}
 	}()
 
 	select {
 	case <-kp.Exit():
-	case <-serverCloe:
+	case <-serverCloseCh:
 	}
 
 	appPrepareForceExit()
-	err = serve.Shutdown(context.Background())
-	if err != nil {
+	if err := server.Shutdown(context.Background()); err != nil {
 		logging.Infof("App server Shutdown: %v\n", err)
 	}
 	logging.Info("App server Shutdown ok")
 
-	err = appShutdown(webApp.Application)
-
-	return err
+	return appShutdown(application)
 }
 
-// setupGRPCVars ...
 func setupWEBVars(webApp *vars.WEBApplication) error {
-	err := setupCommonVars(webApp)
-	if err != nil {
+	if err := setupCommonVars(webApp); err != nil {
 		return err
 	}
-	// seata init config file
 	if vars.TransactionSeataSetting != nil && vars.TransactionSeataSetting.Enable {
 		if vars.TransactionSeataSetting.ConfFile == "" {
 			return fmt.Errorf("transaction seata loaded config file null")
 		}
 		client.InitPath(vars.TransactionSeataSetting.ConfFile)
 	}
-
 	return nil
 }

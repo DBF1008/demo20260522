@@ -2,88 +2,81 @@ package config
 
 import (
 	"flag"
-	"gitee.com/cristiane/micro-mall-api/config/setting"
-	"gitee.com/cristiane/micro-mall-api/vars"
 	"log"
 
+	"gitee.com/cristiane/micro-mall-api/config/setting"
+	"gitee.com/cristiane/micro-mall-api/vars"
 	"github.com/go-ini/ini"
 )
 
 const (
-	// ConfFileName defines config file name.
-	ConfFileName = "./etc/app.ini"
-	// SectionServer is a section name for grpc server.
-	SectionServer = "web-server"
-	// SectionLogger is a section name for logger.
-	SectionLogger = "web-logger"
-	// jwt is token vaild
-	SectionJwt = "web-jwt"
-	// SectionRateLimit is rate limit
-	SectionRateLimit = "web-rate-limit"
-	//SectionTransactionSeata is seata
+	ConfFileName            = "./etc/app.ini"
+	SectionServer           = "web-server"
+	SectionLogger           = "web-logger"
+	SectionJwt              = "web-jwt"
+	SectionRateLimit        = "web-rate-limit"
 	SectionTransactionSeata = "transaction-seata"
 )
 
-// cfg reads file app.ini.
 var (
 	cfg      *ini.File
 	flagConf = flag.String("web_conf_file", "", "Set app config.")
 )
 
-// LoadDefaultConfig loads config form cfg.
+var defaultSectionLoaders = map[string]func(){
+	SectionServer: func() {
+		vars.ServerSetting = new(setting.ServerSettingS)
+		MapConfig(SectionServer, vars.ServerSetting)
+	},
+	SectionRateLimit: func() {
+		vars.RateLimitSetting = new(setting.RateLimitSettingS)
+		MapConfig(SectionRateLimit, vars.RateLimitSetting)
+	},
+	SectionLogger: func() {
+		vars.LoggerSetting = new(setting.LoggerSettingS)
+		MapConfig(SectionLogger, vars.LoggerSetting)
+	},
+	SectionJwt: func() {
+		vars.JwtSetting = new(setting.JwtSettingS)
+		MapConfig(SectionJwt, vars.JwtSetting)
+	},
+	SectionTransactionSeata: func() {
+		vars.TransactionSeataSetting = new(setting.TransactionSeataSettingS)
+		MapConfig(SectionTransactionSeata, vars.TransactionSeataSetting)
+	},
+}
+
 func LoadDefaultConfig(application *vars.Application) error {
-	// Setup cfg object
 	flag.Parse()
-	var err error
-	var confFile = ConfFileName
-	if *flagConf != "" {
-		confFile = *flagConf
-	}
-	cfg, err = ini.Load(confFile)
+
+	loadedCfg, err := ini.Load(configFilePath())
 	if err != nil {
 		return err
 	}
+	cfg = loadedCfg
 
-	// Setup default settings
 	for _, sectionName := range cfg.SectionStrings() {
-		if sectionName == SectionServer {
-			vars.ServerSetting = new(setting.ServerSettingS)
-			MapConfig(sectionName, vars.ServerSetting)
-			continue
-		}
-		if sectionName == SectionRateLimit {
-			vars.RateLimitSetting = new(setting.RateLimitSettingS)
-			MapConfig(sectionName, vars.RateLimitSetting)
-			continue
-		}
-		if sectionName == SectionLogger {
-			vars.LoggerSetting = new(setting.LoggerSettingS)
-			MapConfig(sectionName, vars.LoggerSetting)
-			continue
-		}
-		if sectionName == SectionJwt {
-			vars.JwtSetting = new(setting.JwtSettingS)
-			MapConfig(sectionName, vars.JwtSetting)
-			continue
-		}
-		if sectionName == SectionTransactionSeata {
-			vars.TransactionSeataSetting = new(setting.TransactionSeataSettingS)
-			MapConfig(sectionName, vars.TransactionSeataSetting)
-			continue
+		if loader, ok := defaultSectionLoaders[sectionName]; ok {
+			loader()
 		}
 	}
 	return nil
 }
 
-// MapConfig uses cfg to map config.
+func configFilePath() string {
+	if *flagConf != "" {
+		return *flagConf
+	}
+	return ConfFileName
+}
+
 func MapConfig(section string, v interface{}) {
 	log.Printf("[info] Load default config %s", section)
 	sec, err := cfg.GetSection(section)
 	if err != nil {
 		log.Fatalf("[err] Fail to parse '%s': %v", section, err)
 	}
-	err = sec.MapTo(v)
-	if err != nil {
+	if err = sec.MapTo(v); err != nil {
 		log.Fatalf("[err] %s section map to setting err: %v", section, err)
 	}
 }
